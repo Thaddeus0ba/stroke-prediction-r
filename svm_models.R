@@ -1,6 +1,4 @@
-# ================================
 # FINAL SUBMISSION CODE (UPSAMPLING + SVMs)
-# ================================
 
 library(caret)
 library(e1071)
@@ -9,14 +7,10 @@ library(kernlab)
 
 cat("Script started...\n")
 
-# -------------------------------
 # LOAD DATA
-# -------------------------------
 df <- read.csv("healthcare-dataset-stroke-data.csv")
 
-# -------------------------------
 # CLEANING
-# -------------------------------
 df <- df[, !(names(df) %in% c("id"))]
 
 df$bmi <- as.numeric(df$bmi)
@@ -37,26 +31,20 @@ df$stroke <- factor(df$stroke, levels = c(0,1))
 
 df <- na.omit(df)
 
-# -------------------------------
 # SPLIT
-# -------------------------------
 set.seed(42)
 idx <- createDataPartition(df$stroke, p = 0.8, list = FALSE)
 train <- df[idx, ]
 test  <- df[-idx, ]
 
-# -------------------------------
 # SCALE NUMERIC
-# -------------------------------
 num_cols <- c("age","avg_glucose_level","bmi")
 
 pre <- preProcess(train[, num_cols], method = c("center","scale"))
 train[, num_cols] <- predict(pre, train[, num_cols])
 test[, num_cols]  <- predict(pre, test[, num_cols])
 
-# -------------------------------
 # UPSAMPLING (BEST METHOD)
-# -------------------------------
 train_bal <- upSample(
   x = train[, -which(names(train) == "stroke")],
   y = train$stroke,
@@ -65,9 +53,7 @@ train_bal <- upSample(
 
 cat("Training models...\n")
 
-# -------------------------------
 # MODELS
-# -------------------------------
 
 # Linear SVM (BEST)
 svm_lin <- svm(
@@ -87,9 +73,7 @@ svm_nys <- ksvm(
 
 nys_prob <- predict(svm_nys, test, type="probabilities")[,2]
 
-# -------------------------------
 # EVALUATION
-# -------------------------------
 evaluate <- function(true, prob, name){
 
   true <- as.numeric(as.character(true))
