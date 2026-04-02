@@ -109,4 +109,4 @@ cat("\nFINAL RESULTS\n")
 evaluate(test$stroke, lin_prob, "Linear SVM (BEST)")
 evaluate(test$stroke, nys_prob, "Nyström SVM")
 
-cat("\nDONE ✅\n")
+cat("\nExperiment Done\n")
