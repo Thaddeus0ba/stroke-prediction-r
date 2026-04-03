@@ -156,7 +156,7 @@ results_df <- bind_rows(
   predict_model(model_rf, "Random Forest"),
   predict_model(model_svm_linear, "Linear SVM"),
   predict_model(model_svm_rbf, "RBF SVM"),
-  predict_model(model_nystrom, "Nyström SVM (True)", TRUE)
+  predict_model(model_nystrom, "Nyström SVM", TRUE)
 )
 
 # -----------------------------
