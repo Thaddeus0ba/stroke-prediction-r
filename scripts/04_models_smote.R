@@ -28,21 +28,21 @@ factor_cols <- c(
 train_data[factor_cols] <- lapply(train_data[factor_cols], factor)
 test_data[factor_cols]  <- lapply(test_data[factor_cols], factor)
 
+# -----------------------------
 # SMOTE (TRAIN ONLY)
+# -----------------------------
 rec <- recipe(stroke ~ ., data = train_data) %>%
   step_dummy(all_nominal_predictors()) %>%
   step_smote(stroke)
 
-# TRAIN the recipe
 rec_prep <- prep(rec, training = train_data)
 
-# APPLY to train
 train_smote <- bake(rec_prep, new_data = NULL)
-
-# APPLY to test
 test_processed <- bake(rec_prep, new_data = test_data)
 
-# 5. Train control
+# -----------------------------
+# Train control
+# -----------------------------
 ctrl <- trainControl(
   method = "cv",
   number = 5,
@@ -51,62 +51,76 @@ ctrl <- trainControl(
   savePredictions = TRUE
 )
 
-# 6. Logistic Regression
+# -----------------------------
+# Models
+# -----------------------------
 set.seed(42)
-model_log <- train(
-  stroke ~ .,
-  data = train_smote,
-  method = "glm",
-  family = "binomial",
-  trControl = ctrl,
-  metric = "ROC"
+model_log <- train(stroke ~ ., data = train_smote, method = "glm",
+                   family = "binomial", trControl = ctrl, metric = "ROC")
+
+set.seed(42)
+model_rf <- train(stroke ~ ., data = train_smote, method = "rf",
+                  trControl = ctrl, metric = "ROC", ntree = 200)
+
+set.seed(42)
+model_svm_linear <- train(stroke ~ ., data = train_smote,
+                          method = "svmLinear", trControl = ctrl, metric = "ROC")
+
+set.seed(42)
+model_svm_rbf <- train(stroke ~ ., data = train_smote,
+                       method = "svmRadial", trControl = ctrl, metric = "ROC")
+
+# -----------------------------
+# TRUE NYSTRÖM APPROXIMATION
+# -----------------------------
+
+# Convert to matrix
+x_train <- as.matrix(train_smote[, -which(names(train_smote) == "stroke")])
+y_train <- train_smote$stroke
+x_test  <- as.matrix(test_processed[, -which(names(test_processed) == "stroke")])
+
+set.seed(42)
+m <- 300  # number of landmark points
+idx <- sample(1:nrow(x_train), m)
+landmarks <- x_train[idx, ]
+
+# RBF kernel
+rbf_kernel <- function(x, y, sigma = 0.05) {
+  as.matrix(exp(-sigma * (as.matrix(dist(rbind(x,y)))[1:nrow(x), (nrow(x)+1):(nrow(x)+nrow(y))]^2)))
+}
+
+# Kernel matrices
+K_mm <- rbf_kernel(landmarks, landmarks)
+K_nm <- rbf_kernel(x_train, landmarks)
+
+# Eigen decomposition
+eig <- eigen(K_mm)
+U <- eig$vectors
+S <- diag(1 / sqrt(eig$values + 1e-8))
+
+# Feature mapping
+Z_train <- K_nm %*% U %*% S
+
+# Transform test
+K_test <- rbf_kernel(x_test, landmarks)
+Z_test <- K_test %*% U %*% S
+
+# Train linear SVM
+model_nystrom <- svm(
+  x = Z_train,
+  y = y_train,
+  kernel = "linear",
+  probability = TRUE
 )
 
-# 7. Random Forest
-set.seed(42)
-model_rf <- train(
-  stroke ~ .,
-  data = train_smote,
-  method = "rf",
-  trControl = ctrl,
-  metric = "ROC",
-  ntree = 200
-)
-
-# 8. Linear SVM
-set.seed(42)
-model_svm_linear <- train(
-  stroke ~ .,
-  data = train_smote,
-  method = "svmLinear",
-  trControl = ctrl,
-  metric = "ROC"
-)
-
-# 9. RBF SVM
-set.seed(42)
-model_svm_rbf <- train(
-  stroke ~ .,
-  data = train_smote,
-  method = "svmRadial",
-  trControl = ctrl,
-  metric = "ROC"
-)
-
-# 10. Nyström SVM (kernlab)
-set.seed(42)
-model_nystrom <- ksvm(
-  stroke ~ .,
-  data = train_smote,
-  kernel = "rbfdot",
-  prob.model = TRUE
-)
-
-# 11. Prediction helper
+# -----------------------------
+# Prediction + METRICS
+# -----------------------------
 predict_model <- function(model, name, is_kernlab = FALSE) {
-  
+
   if (is_kernlab) {
-    probs <- predict(model, test_processed, type = "probabilities")[, "Stroke"]
+    pred_obj <- predict(model, Z_test, probability = TRUE)
+    probs <- attr(pred_obj, "probabilities")[, "Stroke"]
     preds <- ifelse(probs > 0.5, "Stroke", "No_Stroke")
     preds <- factor(preds, levels = c("Stroke", "No_Stroke"))
   } else {
@@ -117,26 +131,39 @@ predict_model <- function(model, name, is_kernlab = FALSE) {
   cm <- confusionMatrix(preds, test_data$stroke)
   roc_obj <- roc(response = test_data$stroke, predictor = probs)
 
-  list(
-    name = name,
-    confusion = cm,
-    AUC = auc(roc_obj)
+  precision <- cm$byClass["Pos Pred Value"]
+  recall    <- cm$byClass["Sensitivity"]
+  specificity <- cm$byClass["Specificity"]
+  f1 <- (2 * precision * recall) / (precision + recall)
+
+  data.frame(
+    Model = name,
+    Accuracy = cm$overall["Accuracy"],
+    Kappa = cm$overall["Kappa"],
+    Recall = recall,
+    Specificity = specificity,
+    Precision = precision,
+    F1 = f1,
+    AUC = as.numeric(auc(roc_obj))
   )
 }
 
-# 12. Collect results
-results <- list(
+# -----------------------------
+# Collect results
+# -----------------------------
+results_df <- bind_rows(
   predict_model(model_log, "Logistic Regression"),
   predict_model(model_rf, "Random Forest"),
   predict_model(model_svm_linear, "Linear SVM"),
   predict_model(model_svm_rbf, "RBF SVM"),
-  predict_model(model_nystrom, "Nyström SVM", TRUE)
+  predict_model(model_nystrom, "Nyström SVM (True)", TRUE)
 )
 
-# 13. Print results
-for (res in results) {
-  cat("\n=========================\n")
-  cat("Model:", res$name, "\n")
-  print(res$confusion)
-  cat("AUC:", as.numeric(res$AUC), "\n")
-}
+# -----------------------------
+# PRINT + SAVE
+# -----------------------------
+print(results_df)
+
+write.csv(results_df, "outputs/model_results_smote.csv", row.names = FALSE)
+
+cat("\nSaved to: outputs/model_results_smote.csv\n")
