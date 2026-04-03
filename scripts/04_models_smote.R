@@ -28,9 +28,7 @@ factor_cols <- c(
 train_data[factor_cols] <- lapply(train_data[factor_cols], factor)
 test_data[factor_cols]  <- lapply(test_data[factor_cols], factor)
 
-# -----------------------------
 # SMOTE (TRAIN ONLY)
-# -----------------------------
 rec <- recipe(stroke ~ ., data = train_data) %>%
   step_dummy(all_nominal_predictors()) %>%
   step_smote(stroke)
@@ -40,9 +38,7 @@ rec_prep <- prep(rec, training = train_data)
 train_smote <- bake(rec_prep, new_data = NULL)
 test_processed <- bake(rec_prep, new_data = test_data)
 
-# -----------------------------
 # Train control
-# -----------------------------
 ctrl <- trainControl(
   method = "cv",
   number = 5,
@@ -51,9 +47,7 @@ ctrl <- trainControl(
   savePredictions = TRUE
 )
 
-# -----------------------------
 # Models
-# -----------------------------
 set.seed(42)
 model_log <- train(stroke ~ ., data = train_smote, method = "glm",
                    family = "binomial", trControl = ctrl, metric = "ROC")
@@ -70,9 +64,7 @@ set.seed(42)
 model_svm_rbf <- train(stroke ~ ., data = train_smote,
                        method = "svmRadial", trControl = ctrl, metric = "ROC")
 
-# -----------------------------
 # TRUE NYSTRÖM APPROXIMATION
-# -----------------------------
 
 # Convert to matrix
 x_train <- as.matrix(train_smote[, -which(names(train_smote) == "stroke")])
@@ -113,9 +105,7 @@ model_nystrom <- svm(
   probability = TRUE
 )
 
-# -----------------------------
 # Prediction + METRICS
-# -----------------------------
 predict_model <- function(model, name, is_kernlab = FALSE) {
 
   if (is_kernlab) {
@@ -148,9 +138,7 @@ predict_model <- function(model, name, is_kernlab = FALSE) {
   )
 }
 
-# -----------------------------
 # Collect results
-# -----------------------------
 results_df <- bind_rows(
   predict_model(model_log, "Logistic Regression"),
   predict_model(model_rf, "Random Forest"),
@@ -159,9 +147,7 @@ results_df <- bind_rows(
   predict_model(model_nystrom, "Nyström SVM", TRUE)
 )
 
-# -----------------------------
 # PRINT + SAVE
-# -----------------------------
 print(results_df)
 
 write.csv(results_df, "outputs/model_results_smote.csv", row.names = FALSE)
