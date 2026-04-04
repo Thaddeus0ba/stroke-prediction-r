@@ -11,8 +11,7 @@ train_data <- read_csv("outputs/train_data.csv", show_col_types = FALSE)
 test_data  <- read_csv("outputs/test_data.csv", show_col_types = FALSE)
 
 # -----------------------------
-# 2. Fix target labels for caret
-# caret needs valid R variable names for class probabilities
+# 2. Fix target labels
 # -----------------------------
 train_data$stroke <- ifelse(train_data$stroke == "Stroke", "Stroke", "No_Stroke")
 test_data$stroke  <- ifelse(test_data$stroke == "Stroke", "Stroke", "No_Stroke")
@@ -21,7 +20,7 @@ train_data$stroke <- factor(train_data$stroke, levels = c("Stroke", "No_Stroke")
 test_data$stroke  <- factor(test_data$stroke, levels = c("Stroke", "No_Stroke"))
 
 # -----------------------------
-# 3. Convert categorical predictors back to factors
+# 3. Convert categorical predictors
 # -----------------------------
 factor_cols <- c(
   "gender", "ever_married", "work_type",
@@ -48,12 +47,9 @@ ctrl <- trainControl(
 # -----------------------------
 set.seed(42)
 model_log <- train(
-  stroke ~ .,
-  data = train_data,
-  method = "glm",
-  family = "binomial",
-  trControl = ctrl,
-  metric = "ROC"
+  stroke ~ ., data = train_data,
+  method = "glm", family = "binomial",
+  trControl = ctrl, metric = "ROC"
 )
 
 # -----------------------------
@@ -61,11 +57,9 @@ model_log <- train(
 # -----------------------------
 set.seed(42)
 model_rf <- train(
-  stroke ~ .,
-  data = train_data,
+  stroke ~ ., data = train_data,
   method = "rf",
-  trControl = ctrl,
-  metric = "ROC",
+  trControl = ctrl, metric = "ROC",
   ntree = 200
 )
 
@@ -74,11 +68,9 @@ model_rf <- train(
 # -----------------------------
 set.seed(42)
 model_svm_linear <- train(
-  stroke ~ .,
-  data = train_data,
+  stroke ~ ., data = train_data,
   method = "svmLinear",
-  trControl = ctrl,
-  metric = "ROC"
+  trControl = ctrl, metric = "ROC"
 )
 
 # -----------------------------
@@ -86,19 +78,70 @@ model_svm_linear <- train(
 # -----------------------------
 set.seed(42)
 model_svm_rbf <- train(
-  stroke ~ .,
-  data = train_data,
+  stroke ~ ., data = train_data,
   method = "svmRadial",
-  trControl = ctrl,
-  metric = "ROC"
+  trControl = ctrl, metric = "ROC"
 )
 
 # -----------------------------
-# 9. Prediction helper
+# 9. NYSTRÖM SVM (FIXED)
 # -----------------------------
-predict_model <- function(model, name) {
-  preds <- predict(model, test_data)
-  probs <- predict(model, test_data, type = "prob")[, "Stroke"]
+
+# Combine to ensure same columns
+combined <- bind_rows(train_data, test_data)
+
+# Create consistent numeric matrix
+full_matrix <- model.matrix(stroke ~ . - 1, data = combined)
+
+# Split back
+x_train <- full_matrix[1:nrow(train_data), ]
+x_test  <- full_matrix[(nrow(train_data)+1):nrow(full_matrix), ]
+
+y_train <- train_data$stroke
+
+set.seed(42)
+m <- 300
+idx <- sample(1:nrow(x_train), m)
+landmarks <- x_train[idx, ]
+
+rbf_kernel <- function(x, y, sigma = 0.05) {
+  dist_matrix <- as.matrix(dist(rbind(x, y)))
+  K <- exp(-sigma * dist_matrix^2)
+  K[1:nrow(x), (nrow(x)+1):(nrow(x)+nrow(y))]
+}
+
+K_mm <- rbf_kernel(landmarks, landmarks)
+K_nm <- rbf_kernel(x_train, landmarks)
+
+eig <- eigen(K_mm)
+U <- eig$vectors
+S <- diag(1 / sqrt(eig$values + 1e-8))
+
+Z_train <- K_nm %*% U %*% S
+K_test <- rbf_kernel(x_test, landmarks)
+Z_test <- K_test %*% U %*% S
+
+model_nystrom <- svm(
+  x = Z_train,
+  y = y_train,
+  kernel = "linear",
+  probability = TRUE
+)
+
+# -----------------------------
+# 10. Prediction helper
+# -----------------------------
+predict_model <- function(model, name, is_nystrom = FALSE) {
+  
+  if (is_nystrom) {
+    pred_obj <- predict(model, Z_test, probability = TRUE)
+    probs <- attr(pred_obj, "probabilities")[, "Stroke"]
+    preds <- ifelse(probs > 0.5, "Stroke", "No_Stroke")
+    preds <- factor(preds, levels = c("Stroke", "No_Stroke"))
+  } else {
+    preds <- predict(model, test_data)
+    probs <- predict(model, test_data, type = "prob")[, "Stroke"]
+  }
   
   cm <- confusionMatrix(preds, test_data$stroke)
   roc_obj <- roc(response = test_data$stroke, predictor = probs)
@@ -111,17 +154,18 @@ predict_model <- function(model, name) {
 }
 
 # -----------------------------
-# 10. Collect results
+# 11. Collect results
 # -----------------------------
 results <- list(
   predict_model(model_log, "Logistic Regression"),
   predict_model(model_rf, "Random Forest"),
   predict_model(model_svm_linear, "Linear SVM"),
-  predict_model(model_svm_rbf, "RBF SVM")
+  predict_model(model_svm_rbf, "RBF SVM"),
+  predict_model(model_nystrom, "Nyström SVM", TRUE)
 )
 
 # -----------------------------
-# 11. Print results
+# 12. Print results
 # -----------------------------
 for (res in results) {
   cat("\n=========================\n")
@@ -129,3 +173,30 @@ for (res in results) {
   print(res$confusion)
   cat("AUC:", as.numeric(res$AUC), "\n")
 }
+
+# -----------------------------
+# 13. Save results to CSV
+# -----------------------------
+results_df <- bind_rows(lapply(results, function(res) {
+  cm <- res$confusion
+  
+  precision <- cm$byClass["Pos Pred Value"]
+  recall <- cm$byClass["Sensitivity"]
+  specificity <- cm$byClass["Specificity"]
+  f1 <- (2 * precision * recall) / (precision + recall)
+  
+  data.frame(
+    Model = res$name,
+    Accuracy = cm$overall["Accuracy"],
+    Kappa = cm$overall["Kappa"],
+    Recall = recall,
+    Specificity = specificity,
+    Precision = precision,
+    F1 = f1,
+    AUC = as.numeric(res$AUC)
+  )
+}))
+
+write.csv(results_df, "outputs/model_results.csv", row.names = FALSE)
+
+cat("\nSaved to: outputs/model_results.csv\n")
