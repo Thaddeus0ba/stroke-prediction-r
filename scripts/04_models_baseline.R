@@ -4,24 +4,18 @@ library(e1071)
 library(randomForest)
 library(pROC)
 
-# -----------------------------
 # 1. Load preprocessed data
-# -----------------------------
 train_data <- read_csv("outputs/train_data.csv", show_col_types = FALSE)
 test_data  <- read_csv("outputs/test_data.csv", show_col_types = FALSE)
 
-# -----------------------------
 # 2. Fix target labels
-# -----------------------------
 train_data$stroke <- ifelse(train_data$stroke == "Stroke", "Stroke", "No_Stroke")
 test_data$stroke  <- ifelse(test_data$stroke == "Stroke", "Stroke", "No_Stroke")
 
 train_data$stroke <- factor(train_data$stroke, levels = c("Stroke", "No_Stroke"))
 test_data$stroke  <- factor(test_data$stroke, levels = c("Stroke", "No_Stroke"))
 
-# -----------------------------
 # 3. Convert categorical predictors
-# -----------------------------
 factor_cols <- c(
   "gender", "ever_married", "work_type",
   "Residence_type", "smoking_status",
@@ -31,9 +25,7 @@ factor_cols <- c(
 train_data[factor_cols] <- lapply(train_data[factor_cols], factor)
 test_data[factor_cols]  <- lapply(test_data[factor_cols], factor)
 
-# -----------------------------
 # 4. Train control
-# -----------------------------
 ctrl <- trainControl(
   method = "cv",
   number = 5,
@@ -42,9 +34,7 @@ ctrl <- trainControl(
   savePredictions = TRUE
 )
 
-# -----------------------------
 # 5. Logistic Regression
-# -----------------------------
 set.seed(42)
 model_log <- train(
   stroke ~ ., data = train_data,
@@ -52,9 +42,7 @@ model_log <- train(
   trControl = ctrl, metric = "ROC"
 )
 
-# -----------------------------
 # 6. Random Forest
-# -----------------------------
 set.seed(42)
 model_rf <- train(
   stroke ~ ., data = train_data,
@@ -63,9 +51,7 @@ model_rf <- train(
   ntree = 200
 )
 
-# -----------------------------
 # 7. Linear SVM
-# -----------------------------
 set.seed(42)
 model_svm_linear <- train(
   stroke ~ ., data = train_data,
@@ -73,9 +59,7 @@ model_svm_linear <- train(
   trControl = ctrl, metric = "ROC"
 )
 
-# -----------------------------
 # 8. RBF SVM
-# -----------------------------
 set.seed(42)
 model_svm_rbf <- train(
   stroke ~ ., data = train_data,
@@ -83,9 +67,7 @@ model_svm_rbf <- train(
   trControl = ctrl, metric = "ROC"
 )
 
-# -----------------------------
 # 9. NYSTRÖM SVM (FIXED)
-# -----------------------------
 
 # Combine to ensure same columns
 combined <- bind_rows(train_data, test_data)
@@ -128,9 +110,7 @@ model_nystrom <- svm(
   probability = TRUE
 )
 
-# -----------------------------
 # 10. Prediction helper
-# -----------------------------
 predict_model <- function(model, name, is_nystrom = FALSE) {
   
   if (is_nystrom) {
@@ -153,9 +133,7 @@ predict_model <- function(model, name, is_nystrom = FALSE) {
   )
 }
 
-# -----------------------------
 # 11. Collect results
-# -----------------------------
 results <- list(
   predict_model(model_log, "Logistic Regression"),
   predict_model(model_rf, "Random Forest"),
@@ -164,9 +142,7 @@ results <- list(
   predict_model(model_nystrom, "Nyström SVM", TRUE)
 )
 
-# -----------------------------
 # 12. Print results
-# -----------------------------
 for (res in results) {
   cat("\n=========================\n")
   cat("Model:", res$name, "\n")
@@ -174,9 +150,7 @@ for (res in results) {
   cat("AUC:", as.numeric(res$AUC), "\n")
 }
 
-# -----------------------------
 # 13. Save results to CSV
-# -----------------------------
 results_df <- bind_rows(lapply(results, function(res) {
   cm <- res$confusion
   
@@ -200,3 +174,66 @@ results_df <- bind_rows(lapply(results, function(res) {
 write.csv(results_df, "outputs/model_results.csv", row.names = FALSE)
 
 cat("\nSaved to: outputs/model_results.csv\n")
+
+# 14. Plot model comparison chart
+library(ggplot2)
+library(tidyr)
+
+# Reshape to long format for plotting
+results_long <- results_df %>%
+  select(Model, AUC, Accuracy, Recall, Specificity, Precision, F1) %>%
+  pivot_longer(cols = -Model, names_to = "Metric", values_to = "Value")
+
+# Plot
+ggplot(results_long, aes(x = Model, y = Value, fill = Metric)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  ylim(0, 1) +
+  labs(
+    title = "Model Comparison — Stroke Prediction",
+    x = NULL,
+    y = "Score",
+    fill = "Metric"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 25, hjust = 1),
+    plot.title = element_text(size = 14, face = "bold")
+  )
+
+# Save chart to folder
+library(ggplot2)
+library(tidyr)
+
+# Create folder if it doesn't exist
+if (!dir.exists("charts")) {
+  dir.create("charts")
+}
+
+# Prepare data
+results_long <- results_df %>%
+  pivot_longer(
+    cols = c(Accuracy, AUC, F1),
+    names_to = "Metric",
+    values_to = "Value"
+  )
+
+# Create plot
+p <- ggplot(results_long, aes(x = Model, y = Value, fill = Metric)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_minimal() +
+  labs(
+    title = "Model Performance Comparison",
+    x = "Model",
+    y = "Score"
+  ) +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1))
+
+# Save plot
+ggsave(
+  filename = "charts/model_baseline_comparison.png",
+  plot = p,
+  width = 8,
+  height = 5
+)
+
+cat("Chart saved to: charts/model_baseline_comparison.png\n")

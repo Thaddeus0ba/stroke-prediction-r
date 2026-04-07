@@ -153,3 +153,41 @@ print(results_df)
 write.csv(results_df, "outputs/model_results_smote.csv", row.names = FALSE)
 
 cat("\nSaved to: outputs/model_results_smote.csv\n")
+
+# Create charts folder
+if (!dir.exists("charts")) {
+  dir.create("charts")
+}
+
+library(ggplot2)
+library(tidyr)
+
+# Prepare data for plotting
+results_long <- results_df %>%
+  pivot_longer(
+    cols = c(Accuracy, AUC, F1),
+    names_to = "Metric",
+    values_to = "Value"
+  )
+
+# Create bar chart
+p <- ggplot(results_long, aes(x = Model, y = Value, fill = Metric)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_minimal() +
+  labs(
+    title = "Model Performance Comparison (SMOTE)",
+    x = "Model",
+    y = "Score"
+  ) +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1))
+
+# Save chart
+ggsave(
+  filename = "charts/model_comparison_smote.png",
+  plot = p,
+  width = 8,
+  height = 5,
+  dpi = 300
+)
+
+cat("\nChart saved to: charts/model_comparison_smote.png\n")
